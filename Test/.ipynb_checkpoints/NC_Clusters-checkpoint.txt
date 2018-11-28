@@ -1,0 +1,152 @@
+import numpy as np
+import pandas as pd
+import sklearn 
+from sklearn.pipeline import make_pipeline
+import matplotlib.pyplot as plt
+import pyodbc
+import cx_Oracle
+import time as tm
+import fastcluster
+
+import random 
+random.seed(865)
+
+
+#IMPORT DATA FROM DB
+
+#con = cx_Oracle.connect('pythonhol/welcome@127.0.0.1/orcl') <- Example from Oracle Website
+def openOracle() :
+    '''
+    Open connection to Oracle database
+    '''
+    try:
+        print('Connecting to Oracle')
+        return cx_Oracle.connect('danwal1/DANWAL1$@BA_EDW')
+    except:
+        e = sys.exc_info()
+        logMessage("Error", +str(e))
+        print('Error connecting to Oracle')
+        return 0
+
+t1 = tm.perf_counter() 
+odb = openOracle()
+ocur = odb.cursor()
+ocur.execute("select t.* from DANWAL1.TEST_NCCLUSTERS_TRAIN1 t order by 2,1")
+res = ocur.fetchall()
+t2 = tm.perf_counter()
+odb.close()
+print(t2-t1) #27 seconds with new kernel
+
+print(len(res)) #all 299,397 rows received
+print(res[0])
+
+df = pd.DataFrame(res)
+print(len(df))
+
+
+df.head()
+
+#copy-paste colnames from sql query with 'Copy Header'
+colNames = ["CUSTOMER_ID", "WEEK_ENDING", "RETURN_ORDER_FLAG", "CUST_CLASS_CHNNL_PHONE_FLAG", "CUST_CLASS_CHNNL_WEBSITE_FLAG", "BCAST_INFLUENCED_CUST", "ANYTIME_CUST", "NUM_ORDERS", "GROSS_PRODUCT_SALES", "PRODUCT_QTY", "EXTENDED_PRODUCT_RETAIL_PRICE", "EXTENDED_PRODUCT_DISCOUNT", "EXTENDED_PRODUCT_COST", "EXTENDED_SHIPPING_PRICE", "EXTENDED_SHIPPING_DISCOUNT", "PRODUCT_GROSS_MARGIN", "IMU", "PRODUCT_DISCOUNT_RATE", "PRODUCT_UNIT_PP", "SHIPPING_DISCOUNT_RATE", "PA_CUST", "NUM_DEPTS", "BELLA_CUST", "BELLA_DESIGNER_CUST", "COSTUME_CUST", "COLOR_GOLD_CUST", "GOLD_CUST", "PEARLS_CUST", "SILVER_CUST", "COLOR_SILVER_CUST", "COLOR_SILVER_BRANDS_CUST", "DIAMOND_GOLD_CUST", "DIAMOND_SILVER_CUST", "DIAMOND_SYNTH_CUST", "OTHER_DEPT_CUST", "BELLA_PROD_SALES", "BELLA_DESIGNER_PROD_SALES", "COSTUME_PROD_SALES", "COLOR_GOLD_PROD_SALES", "GOLD_PROD_SALES", "PEARLS_PROD_SALES", "SILVER_PROD_SALES", "COLOR_SILVER_PROD_SALES", "COLOR_SILVER_BRANDS_PROD_SALES", "DIAMOND_GOLD_PROD_SALES", "DIAMOND_SILVER_PROD_SALES", "DIAMOND_SYNTH_PROD_SALES", "OTHER_DEPT_PROD_SALES", "BELLA_PROD_DISC", "BELLA_DESIGNER_PROD_DISC", "COSTUME_PROD_DISC", "COLOR_GOLD_PROD_DISC", "GOLD_PROD_DISC", "PEARLS_PROD_DISC", "SILVER_PROD_DISC", "COLOR_SILVER_PROD_DISC", "COLOR_SILVER_BRANDS_PROD_DISC", "DIAMOND_GOLD_PROD_DISC", "DIAMOND_SILVER_PROD_DISC", "DIAMOND_SYNTH_PROD_DISC", "OTHER_DEPT_PROD_DISC", "BELLA_PROD_QTY", "BELLA_DESIGNER_PROD_QTY", "COSTUME_PROD_QTY", "COLOR_GOLD_PROD_QTY", "GOLD_PROD_QTY", "PEARLS_PROD_QTY", "SILVER_PROD_QTY", "COLOR_SILVER_PROD_QTY", "COLOR_SILVER_BRANDS_PROD_QTY", "DIAMOND_GOLD_PROD_QTY", "DIAMOND_SILVER_PROD_QTY", "DIAMOND_SYNTH_PROD_QTY", "OTHER_DEPT_PROD_QTY", "PROB_ALIVE", "GROSS_MARGIN_AVERAGE_ORDER_DT", "EXP_TRANS_1YR_LTV", "EXP_TRANS_3YR_LTV", "EXP_TRANS_5YR_LTV", "PROB_ALIVE_1YR", "GROSS_MARGIN_AVERAGE_ORDER_DT_1YR", "EXP_TRANS_1YR_LTV_1YR", "EXP_TRANS_3YR_LTV_1YR", "EXP_TRANS_5YR_LTV_1YR"]
+
+#add colnames to df
+"""
+df.set_axis([colNames], axis='columns', inplace=False)
+df.info()
+"""
+
+df.isnull().values.any()
+df.isnull().sum() #3,312 rows with NaNs, localized to LTV variables = replace with 0
+df = df.fillna(0) 
+df.isnull().sum() #0 NaNs remaining
+
+#SEPARATE TRAINING AND TEST DATA
+stratifier = df[1]
+x = df.drop(list(range(0,7)), axis =1)
+
+from sklearn.model_selection import train_test_split
+x_train, x_test, y_train, y_test = train_test_split(x, stratifier, stratify = stratifier, test_size = 0.20)
+x_train.shape
+
+#TEST FOR AND REMOVE COLLINEAR VARIABLES
+corr1 = x_train.corr().abs()
+upper = corr1.where(np.triu(np.ones(corr1.shape), k = 1).astype(np.bool))
+top_drop = [column for column in upper.columns if any(upper[column] > 0.95)]
+top_drop
+[colNames[i] for i in top_drop]
+
+drop = [10, 72, 78, 83] 
+x_train1 = x_train.drop([10, 72, 78, 83], axis = 1)
+x_train1.shape
+
+"""
+VARS DROPPED
+extended_prod_retail_price
+diamond_synth__prod_qty
+exp_trans_5yr_ltv
+exp_trans_5yr_ltv_1yr
+"""
+
+x_train1.columns
+name_drop = [0,1,2,3,4,5,6, 10,  70, 78, 83]
+colNames_short = colNames
+len(colNames_short)
+
+colNames_short = [i for j, i in enumerate(colNames) if j not in (name_drop)]
+len(colNames_short)
+
+x_train1.set_axis([colNames_short], axis='columns', inplace=True)
+x_train1.head()
+x_train1.info() #variables are mix of int64 and float64
+df.isnull().values.any() #no NaNs introduced
+
+x_scale = pd.DataFrame(sklearn.preprocessing.scale(x_train1)) #73 columns, 183,517 rows
+x_scale.info() #all variables are now float64
+x_scale = x_scale.astype('int64')
+x_scale.info()
+
+#DIMENSIONALITY REDUCTION
+#PCA
+import sklearn.decomposition as decomp
+pca = decomp.PCA(0.75)
+pca.fit(x_scale)
+pca.n_components_ #17 components requried to reach 75% variance explained, 32 components required to reach 90%
+print(pca.explained_variance_ratio_)
+x_train_pca = pd.DataFrame(pca.transform(x_scale))
+x_train_pca.head()
+x_train_pca.info()
+x_train_pca = pd.DataFrame(x_train_pca.astype('int64'))
+x_train_pca.shape #17 PC columns, 183,517 rows
+
+
+# DEVELOP DISTANCE MATRIX AND/OR PERFORM CLUSTERING
+import sklearn.cluster as clust
+
+#with scipy.cluster.hierarchy
+#d = distance.pdist(x_train_pca, 'euclidean') #returns MEMORY ERROR
+#Z = ward(x_train_pca)
+
+#hierarchical clustering from sklearn
+a_cluster = clust.AgglomerativeClustering().fit(x_train_pca) #returns MEMORY ERROR
+
+#using DBSCAN from sklearn
+#min points probably 1000
+#create knn distance plot to find optimal epsilon
+from sklearn.neighbors import NearestNeighbors
+from sklearn.neighbors import kneighbors_graph
+n1 = 1000
+nbrs = NearestNeighbors(n_neighbors=n1, algorithm='auto').fit(x_train_pca)
+distances, indices = nbrs.kneighbors(x_train_pca)
+
+
+
+#--------------------------------------------------------------------------------------------------------------------
+#ADDITIONAL CODE
+
+#RECOMBINE WEEK_ENDING WITH REST OF DATA
+x_train = x_train.assign(WEEK_ENDING = y_train)
+x_test = x_test.assign(WEEK_ENDING = y_test)
+
+#BUILD PIPELINE
+from sklearn.pipeline import Pipeline
+sklearn.preprocessing.StandardScaler().fit(x_train)
